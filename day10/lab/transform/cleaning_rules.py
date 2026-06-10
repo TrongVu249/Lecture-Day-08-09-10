@@ -3,12 +3,17 @@ Cleaning rules — raw export → cleaned rows + quarantine.
 
 Baseline gồm các failure mode mở rộng (allowlist doc_id, parse ngày, HR stale version).
 Sinh viên thêm ≥3 rule mới: mỗi rule phải ghi `metric_impact` (xem README — chống trivial).
+
+Distinction (d): ngày cutoff HR đọc từ biến môi trường HR_LEAVE_MIN_EFFECTIVE_DATE
+(mặc định 2026-01-01). Inject giá trị khác sẽ thay đổi quyết định clean mà không cần
+chỉnh sửa code — chứng minh không hard-code.
 """
 
 from __future__ import annotations
 
 import csv
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -149,7 +154,11 @@ def clean_rows(
             quarantine.append({**raw, "reason": eff_err, "effective_date_raw": eff_raw})
             continue
 
-        if doc_id == "hr_leave_policy" and eff_norm < "2026-01-01":
+        # Distinction (d): đọc cutoff từ env, không hard-code trong code.
+        # Thay đổi HR_LEAVE_MIN_EFFECTIVE_DATE trong .env để inject giá trị khác
+        # và chứng minh quyết định quarantine/clean thay đổi theo cấu hình.
+        hr_cutoff = os.environ.get("HR_LEAVE_MIN_EFFECTIVE_DATE", "2026-01-01")
+        if doc_id == "hr_leave_policy" and eff_norm < hr_cutoff:
             quarantine.append(
                 {
                     **raw,
