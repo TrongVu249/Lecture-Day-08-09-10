@@ -34,6 +34,7 @@
   - Các bản ghi có `doc_id` không nằm trong allowlist (`unknown_doc_id`).
   - Bản ghi có `effective_date` trống hoặc sai định dạng không thể parse (`missing_effective_date`, `invalid_effective_date_format`).
   - Bản ghi của `hr_leave_policy` trước năm 2026 (`stale_hr_policy_effective_date`).
+  - Bản ghi của `hr_leave_policy` chứa thông tin phép năm cũ "10 ngày phép" (`stale_hr_policy_text`).
   - Bản ghi trùng lặp nội dung (`duplicate_chunk_text`).
   - Dữ liệu cách ly được lưu tại `artifacts/quarantine/quarantine_[run_id].csv` phục vụ cho việc điều tra và điều phối lại.
 - **Drop (Bỏ qua)**:

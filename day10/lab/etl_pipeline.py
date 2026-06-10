@@ -162,7 +162,14 @@ def cmd_embed_internal(cleaned_csv: Path, *, run_id: str, log) -> bool:
             log(f"embed_prune_removed={len(drop)}")
     except Exception as e:
         log(f"WARN: embed prune skip: {e}")
-    documents = [r["chunk_text"] for r in rows]
+    doc_name_map = {
+        "policy_refund_v4": "Chính sách hoàn tiền policy refund v4",
+        "sla_p1_2026": "SLA ticket P1 2026",
+        "it_helpdesk_faq": "IT helpdesk FAQ",
+        "hr_leave_policy": "Chính sách nghỉ phép HR leave policy 2026",
+        "access_control_sop": "Quy trình cấp quyền truy cập access control SOP"
+    }
+    documents = [f"{r['chunk_text']} ({doc_name_map.get(r.get('doc_id'), r.get('doc_id'))})" for r in rows]
     metadatas = [
         {
             "doc_id": r.get("doc_id", ""),

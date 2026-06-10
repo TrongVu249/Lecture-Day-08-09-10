@@ -32,6 +32,15 @@ quality_rules:
   - id: "no_stale_refund_window"
     description: "Không được để chunk policy refund chứa cửa sổ 14 ngày (lệch so với v4 = 7 ngày)"
     severity: "halt"
+  - id: "hr_leave_no_stale_10d_annual"
+    description: "Không còn marker phép năm cũ 10 ngày trên tài liệu HR"
+    severity: "halt"
+  - id: "no_stuttering_words"
+    description: "Không có từ ngữ lặp đi lặp lại như 'làm việc làm việc'"
+    severity: "warn"
+  - id: "no_raw_warning_markers"
+    description: "Không còn các ký tự/chuỗi cảnh báo thô như '!!!' hoặc 'Nội dung không rõ ràng:' ở đầu câu"
+    severity: "warn"
 
 freshness:
   measured_at: "publish"  # ingest | cleaned | publish
