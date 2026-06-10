@@ -3,12 +3,17 @@ Cleaning rules — raw export → cleaned rows + quarantine.
 
 Baseline gồm các failure mode mở rộng (allowlist doc_id, parse ngày, HR stale version).
 Sinh viên thêm ≥3 rule mới: mỗi rule phải ghi `metric_impact` (xem README — chống trivial).
+
+Distinction (d): ngày cutoff HR đọc từ biến môi trường HR_LEAVE_MIN_EFFECTIVE_DATE
+(mặc định 2026-01-01). Inject giá trị khác sẽ thay đổi quyết định clean mà không cần
+chỉnh sửa code — chứng minh không hard-code.
 """
 
 from __future__ import annotations
 
 import csv
 import hashlib
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -20,11 +25,14 @@ ALLOWED_DOC_IDS = frozenset(
         "sla_p1_2026",
         "it_helpdesk_faq",
         "hr_leave_policy",
+        "access_control_sop",
     }
 )
 
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-_DMY_SLASH = re.compile(r"^(\d{2})/(\d{2})/(\d{4})$")
+_DMY_SLASH = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+_YMD_SLASH = re.compile(r"^(\d{4})/(\d{1,2})/(\d{1,2})$")
+_DMY_DASH = re.compile(r"^(\d{1,2})-(\d{1,2})-(\d{4})$")
 
 
 def _norm_text(s: str) -> str:
@@ -44,13 +52,53 @@ def _normalize_effective_date(raw: str) -> Tuple[str, str]:
     s = (raw or "").strip()
     if not s:
         return "", "empty_effective_date"
-    if _ISO_DATE.match(s):
-        return s, ""
-    m = _DMY_SLASH.match(s)
-    if m:
-        dd, mm, yyyy = m.group(1), m.group(2), m.group(3)
-        return f"{yyyy}-{mm}-{dd}", ""
+    
+    # Isolate date part if it has a time component
+    s_date = s.split('T')[0].split(' ')[0]
+    
+    if _ISO_DATE.match(s_date):
+        return s_date, ""
+        
+    m_dmy_slash = _DMY_SLASH.match(s_date)
+    if m_dmy_slash:
+        dd, mm, yyyy = m_dmy_slash.group(1), m_dmy_slash.group(2), m_dmy_slash.group(3)
+        return f"{yyyy}-{mm.zfill(2)}-{dd.zfill(2)}", ""
+        
+    m_ymd_slash = _YMD_SLASH.match(s_date)
+    if m_ymd_slash:
+        yyyy, mm, dd = m_ymd_slash.group(1), m_ymd_slash.group(2), m_ymd_slash.group(3)
+        return f"{yyyy}-{mm.zfill(2)}-{dd.zfill(2)}", ""
+        
+    m_dmy_dash = _DMY_DASH.match(s_date)
+    if m_dmy_dash:
+        dd, mm, yyyy = m_dmy_dash.group(1), m_dmy_dash.group(2), m_dmy_dash.group(3)
+        return f"{yyyy}-{mm.zfill(2)}-{dd.zfill(2)}", ""
+        
     return "", "invalid_effective_date_format"
+
+
+def _clean_chunk_text(text: str) -> str:
+    """
+    Dọn dẹp text bẩn: loại bỏ tiền tố warning/chú ý và sửa lặp từ.
+    """
+    t = (text or "").strip()
+    # Loại bỏ các prefix warning
+    while True:
+        changed = False
+        if t.startswith("!!!"):
+            t = t[3:].strip()
+            changed = True
+        if t.startswith("Nội dung không rõ ràng:"):
+            t = t[len("Nội dung không rõ ràng:"):].strip()
+            changed = True
+        if not changed:
+            break
+            
+    # Chuẩn hóa lặp từ "làm việc làm việc" -> "làm việc"
+    t = re.sub(r"(làm\s+việc\s*){2,}", "làm việc ", t, flags=re.IGNORECASE)
+    
+    # Chuẩn hóa khoảng trắng thừa
+    return " ".join(t.split())
 
 
 def load_raw_csv(path: Path) -> List[Dict[str, str]]:
@@ -77,6 +125,11 @@ def clean_rows(
     4) Quarantine: chunk_text rỗng hoặc effective_date rỗng sau chuẩn hoá.
     5) Loại trùng nội dung chunk_text (giữ bản đầu).
     6) Fix stale refund: policy_refund_v4 chứa '14 ngày làm việc' → 7 ngày.
+    
+    Sinh viên mở rộng Sprint 2:
+    - Dọn dẹp text bẩn (!!!" và "Nội dung không rõ ràng:") và chuẩn hóa khoảng trắng.
+    - Sửa lặp từ "làm việc làm việc".
+    - Lọc bỏ bản ghi HR chứa thông tin 10 ngày phép cũ (mặc dù date hợp lệ) -> quarantine với lý do stale_hr_policy_text.
     """
     quarantine: List[Dict[str, Any]] = []
     seen_text: set[str] = set()
@@ -101,7 +154,11 @@ def clean_rows(
             quarantine.append({**raw, "reason": eff_err, "effective_date_raw": eff_raw})
             continue
 
-        if doc_id == "hr_leave_policy" and eff_norm < "2026-01-01":
+        # Distinction (d): đọc cutoff từ env, không hard-code trong code.
+        # Thay đổi HR_LEAVE_MIN_EFFECTIVE_DATE trong .env để inject giá trị khác
+        # và chứng minh quyết định quarantine/clean thay đổi theo cấu hình.
+        hr_cutoff = os.environ.get("HR_LEAVE_MIN_EFFECTIVE_DATE", "2026-01-01")
+        if doc_id == "hr_leave_policy" and eff_norm < hr_cutoff:
             quarantine.append(
                 {
                     **raw,
@@ -111,17 +168,32 @@ def clean_rows(
             )
             continue
 
-        if not text:
+        # Clean dirty text, warnings and stuttering words
+        cleaned_text = _clean_chunk_text(text)
+        if not cleaned_text:
             quarantine.append({**raw, "reason": "missing_chunk_text"})
             continue
 
-        key = _norm_text(text)
+        # Quarantine stale HR leave policy text containing 10-day leave
+        if doc_id == "hr_leave_policy":
+            stale_hr_markers = ["10 ngày phép năm", "10 ngày làm việc phép năm"]
+            if any(marker in cleaned_text for marker in stale_hr_markers):
+                quarantine.append(
+                    {
+                        **raw,
+                        "reason": "stale_hr_policy_text",
+                        "effective_date_normalized": eff_norm,
+                    }
+                )
+                continue
+
+        key = _norm_text(cleaned_text)
         if key in seen_text:
             quarantine.append({**raw, "reason": "duplicate_chunk_text"})
             continue
         seen_text.add(key)
 
-        fixed_text = text
+        fixed_text = cleaned_text
         if apply_refund_window_fix and doc_id == "policy_refund_v4":
             if "14 ngày làm việc" in fixed_text:
                 fixed_text = fixed_text.replace(

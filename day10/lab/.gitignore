@@ -9,3 +9,4 @@ chroma_db/
 *.log
 
 artifacts/*
+debug_notes.md

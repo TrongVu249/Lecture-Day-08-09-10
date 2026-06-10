@@ -25,8 +25,9 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from monitoring.freshness_check import check_manifest_freshness
+from monitoring.freshness_check import check_dual_boundary_freshness, check_manifest_freshness
 from quality.expectations import run_expectations
+from quality.schema_validator import validate_cleaned_rows
 from transform.cleaning_rules import clean_rows, load_raw_csv, write_cleaned_csv, write_quarantine_csv
 
 load_dotenv()
@@ -63,7 +64,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     rows = load_raw_csv(raw_path)
     raw_count = len(rows)
+    ingest_timestamp = datetime.now(timezone.utc).isoformat()  # Boundary 1: ingest
     log(f"run_id={run_id}")
+    log(f"ingest_timestamp={ingest_timestamp}")
     log(f"raw_records={raw_count}")
 
     cleaned, quarantine = clean_rows(
@@ -80,6 +83,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     log(f"cleaned_csv={cleaned_path.relative_to(ROOT)}")
     log(f"quarantine_csv={quar_path.relative_to(ROOT)}")
 
+    # --- Bonus (+2): Pydantic schema validation ---
+    pyd_summary, valid_rows = validate_cleaned_rows(cleaned)
+    log(pyd_summary.summary_line())
+    if not pyd_summary.passed:
+        for err in pyd_summary.errors:
+            log(f"pydantic_error row={err['row_index']} chunk_id={err['chunk_id']} doc_id={err['doc_id']} :: {err['error']}")
+        log("WARN: pydantic schema violations found — using valid_rows only for downstream.")
+        cleaned = valid_rows  # downstream được cấp chỉ các row vượt schema
+    # ------------------------------------
+
     results, halt = run_expectations(cleaned)
     for r in results:
         sym = "OK" if r.passed else "FAIL"
@@ -88,7 +101,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         log("PIPELINE_HALT: expectation suite failed (halt).")
         return 2
     if halt and args.skip_validate:
-        log("WARN: expectation failed but --skip-validate → tiếp tục embed (chỉ dùng cho demo Sprint 3).")
+        log("WARN: expectation failed but --skip-validate -> tiếp tục embed (chỉ dùng cho demo Sprint 3).")
 
     # Embed
     embed_ok = cmd_embed_internal(
@@ -106,11 +119,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     manifest = {
         "run_id": run_id,
         "run_timestamp": datetime.now(timezone.utc).isoformat(),
+        "ingest_timestamp": ingest_timestamp,          # Boundary 1: khi pipeline đọc raw CSV
         "raw_path": str(raw_path.relative_to(ROOT)),
         "raw_records": raw_count,
         "cleaned_records": len(cleaned),
         "quarantine_records": len(quarantine),
-        "latest_exported_at": latest_exported,
+        "latest_exported_at": latest_exported,          # Boundary 2: khi data được export từ source
         "no_refund_fix": bool(args.no_refund_fix),
         "skipped_validate": bool(args.skip_validate and halt),
         "cleaned_csv": str(cleaned_path.relative_to(ROOT)),
@@ -121,8 +135,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     man_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     log(f"manifest_written={man_path.relative_to(ROOT)}")
 
+    # Freshness: single boundary (backward compat)
     status, fdetail = check_manifest_freshness(man_path, sla_hours=float(os.environ.get("FRESHNESS_SLA_HOURS", "24")))
     log(f"freshness_check={status} {json.dumps(fdetail, ensure_ascii=False)}")
+
+    # Bonus (+1): Dual boundary freshness — Ingest + Publish
+    dual_status, dual_detail = check_dual_boundary_freshness(man_path, sla_hours=float(os.environ.get("FRESHNESS_SLA_HOURS", "24")))
+    for b in dual_detail.get("dual_boundary", []):
+        log(f"freshness_boundary[{b['boundary']}]={b['status']} {json.dumps({k: v for k, v in b.items() if k != 'boundary'}, ensure_ascii=False)}")
+    log(f"freshness_dual_overall={dual_status}")
 
     log("PIPELINE_OK")
     return 0
@@ -162,7 +183,14 @@ def cmd_embed_internal(cleaned_csv: Path, *, run_id: str, log) -> bool:
             log(f"embed_prune_removed={len(drop)}")
     except Exception as e:
         log(f"WARN: embed prune skip: {e}")
-    documents = [r["chunk_text"] for r in rows]
+    doc_name_map = {
+        "policy_refund_v4": "Chính sách hoàn tiền policy refund v4",
+        "sla_p1_2026": "SLA ticket P1 2026",
+        "it_helpdesk_faq": "IT helpdesk FAQ",
+        "hr_leave_policy": "Chính sách nghỉ phép HR leave policy 2026",
+        "access_control_sop": "Quy trình cấp quyền truy cập access control SOP"
+    }
+    documents = [f"{r['chunk_text']} ({doc_name_map.get(r.get('doc_id'), r.get('doc_id'))})" for r in rows]
     metadatas = [
         {
             "doc_id": r.get("doc_id", ""),

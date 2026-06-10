@@ -112,5 +112,38 @@ def run_expectations(cleaned_rows: List[Dict[str, Any]]) -> Tuple[List[Expectati
         )
     )
 
+    # E7: không còn lặp từ "làm việc làm việc"
+    bad_stutter = [
+        r
+        for r in cleaned_rows
+        if "làm việc làm việc" in (r.get("chunk_text") or "").lower()
+    ]
+    ok7 = len(bad_stutter) == 0
+    results.append(
+        ExpectationResult(
+            "no_stuttering_words",
+            ok7,
+            "warn",
+            f"stuttering_chunks={len(bad_stutter)}",
+        )
+    )
+
+    # E8: không bắt đầu bằng marker cảnh báo !!! hoặc Nội dung không rõ ràng
+    bad_markers = [
+        r
+        for r in cleaned_rows
+        if (r.get("chunk_text") or "").startswith("!!!")
+        or (r.get("chunk_text") or "").startswith("Nội dung không rõ ràng:")
+    ]
+    ok8 = len(bad_markers) == 0
+    results.append(
+        ExpectationResult(
+            "no_raw_warning_markers",
+            ok8,
+            "warn",
+            f"marker_chunks={len(bad_markers)}",
+        )
+    )
+
     halt = any(not r.passed and r.severity == "halt" for r in results)
     return results, halt

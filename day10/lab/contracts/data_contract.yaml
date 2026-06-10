@@ -3,7 +3,7 @@
 
 version: "1.0"
 dataset: "kb_chunk_export"
-owner_team: "__TODO__"
+owner_team: "Ingestion & Quality Team"
 
 schema_cleaned:
   chunk_id:
@@ -32,21 +32,47 @@ quality_rules:
   - id: "no_stale_refund_window"
     description: "Không được để chunk policy refund chứa cửa sổ 14 ngày (lệch so với v4 = 7 ngày)"
     severity: "halt"
+  - id: "hr_leave_no_stale_10d_annual"
+    description: "Không còn marker phép năm cũ 10 ngày trên tài liệu HR"
+    severity: "halt"
+  - id: "no_stuttering_words"
+    description: "Không có từ ngữ lặp đi lặp lại như 'làm việc làm việc'"
+    severity: "warn"
+  - id: "no_raw_warning_markers"
+    description: "Không còn các ký tự/chuỗi cảnh báo thô như '!!!' hoặc 'Nội dung không rõ ràng:' ở đầu câu"
+    severity: "warn"
 
 freshness:
   measured_at: "publish"  # ingest | cleaned | publish
   sla_hours: 24
-  alert_channel: "__TODO__"
+  alert_channel: "#pipeline-alerts"
 
 canonical_sources:
-  - path: "data/docs/policy_refund_v4.txt"
-    doc_id: "policy_refund_v4"
-  - path: "data/docs/sla_p1_2026.txt"
-    doc_id: "sla_p1_2026"
-  - path: "data/docs/it_helpdesk_faq.txt"
-    doc_id: "it_helpdesk_faq"
-  - path: "data/docs/hr_leave_policy.txt"
-    doc_id: "hr_leave_policy"
+  - doc_id: "policy_refund_v4"
+    path: "data/docs/policy_refund_v4.txt"
+    owner: "CS Team / Refund Policy Owner"
+    sla_hours: 24
+    description: "Chính sách hoàn tiền v4 — cửa sổ 7 ngày làm việc"
+  - doc_id: "sla_p1_2026"
+    path: "data/docs/sla_p1_2026.txt"
+    owner: "IT Operations / SLA Owner"
+    sla_hours: 48
+    description: "Quy định SLA ticket P1 năm 2026"
+  - doc_id: "it_helpdesk_faq"
+    path: "data/docs/it_helpdesk_faq.txt"
+    owner: "IT Helpdesk Team"
+    sla_hours: 168
+    description: "FAQ xử lý sự cố IT nội bộ"
+  - doc_id: "hr_leave_policy"
+    path: "data/docs/hr_leave_policy.txt"
+    owner: "HR Department / Leave Policy Owner"
+    sla_hours: 720
+    description: "Quy định nghỉ phép HR 2026 — tối thiểu 12 ngày cho nhân viên < 3 năm"
+  - doc_id: "access_control_sop"
+    path: "data/docs/access_control_sop.txt"
+    owner: "IT Security / CISO Office"
+    sla_hours: 720
+    description: "Quy trình chuẩn cấp phát và quản lý quyền truy cập"
 
 # Baseline allowlist export — nhóm mở rộng doc mới phải đồng bộ cleaning_rules + contract.
 allowed_doc_ids:
@@ -54,7 +80,10 @@ allowed_doc_ids:
   - sla_p1_2026
   - it_helpdesk_faq
   - hr_leave_policy
+  - access_control_sop
 
-# Merit/Distinction: có thể đưa cutoff versioning vào env và tham chiếu ở đây (tránh hard-code trong code).
+# Merit/Distinction: cutoff versioning đọc từ env HR_LEAVE_MIN_EFFECTIVE_DATE
+# — không hard-code trong code, inject khác giá trị để chứng minh quyết định clean thay đổi.
 policy_versioning:
+  hr_leave_min_effective_date_env_key: "HR_LEAVE_MIN_EFFECTIVE_DATE"
   hr_leave_min_effective_date: "2026-01-01"
